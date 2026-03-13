@@ -32,46 +32,75 @@ export default function App() {
   const [privateMessage, setPrivateMessage] = useState('');
   const [mode, setMode] = useState('rooms');
 
-  useEffect(() => {
-    socket.connect();
-
-    socket.on('bootstrap', (payload) => {
-      setMe(payload.me);
-      setRooms(payload.rooms);
-      setOnlineUsers(payload.onlineUsers);
-      if (!activeRoomId && payload.rooms[0]) {
+useEffect(() => {
+  async function loadBootstrap() {
+    try {
+      const res = await fetch(`${API_URL}/bootstrap`);
+      const payload = await res.json();
+      setRooms(payload.rooms || []);
+      setOnlineUsers(payload.onlineUsers || []);
+      if (!activeRoomId && payload.rooms?.[0]) {
         setActiveRoomId(payload.rooms[0].id);
-        socket.emit('room:join', { roomId: payload.rooms[0].id });
       }
-    });
+    } catch (err) {
+      console.error('Bootstrap fetch failed:', err);
+    }
+  }
 
-    socket.on('presence:update', (users) => setOnlineUsers(users));
-    socket.on('rooms:update', (nextRooms) => setRooms(nextRooms));
-    socket.on('room:history', (room) => {
-      setRooms((prev) => prev.map((item) => (item.id === room.id ? room : item)));
-    });
-    socket.on('room:message', ({ roomId, message }) => {
-      setRooms((prev) => prev.map((room) => room.id === roomId ? { ...room, messages: [...(room.messages || []), message] } : room));
-    });
-    socket.on('room:deleted', ({ roomId }) => {
-      setRooms((prev) => prev.filter((room) => room.id !== roomId));
-      if (activeRoomId === roomId) {
-        setActiveRoomId(null);
-      }
-    });
-    socket.on('private:thread', (thread) => {
-      setThreads((prev) => ({ ...prev, [thread.id]: thread }));
-    });
+  loadBootstrap();
+  socket.connect();
 
-    return () => {
-      socket.disconnect();
-    };
-  }, [activeRoomId]);
+  const onBootstrap = (payload) => {
+    setMe(payload.me);
+    setRooms(payload.rooms || []);
+    setOnlineUsers(payload.onlineUsers || []);
+    if (!activeRoomId && payload.rooms?.[0]) {
+      setActiveRoomId(payload.rooms[0].id);
+      socket.emit('room:join', { roomId: payload.rooms[0].id });
+    }
+  };
 
-  useEffect(() => {
-    if (!me) return;
-    socket.emit('user:register', { nickname });
-  }, []);
+  const onPresenceUpdate = (users) => setOnlineUsers(users);
+  const onRoomsUpdate = (nextRooms) => setRooms(nextRooms);
+  const onRoomHistory = (room) => {
+    setRooms((prev) => prev.map((item) => (item.id === room.id ? room : item)));
+  };
+  const onRoomMessage = ({ roomId, message }) => {
+    setRooms((prev) =>
+      prev.map((room) =>
+        room.id === roomId
+          ? { ...room, messages: [...(room.messages || []), message] }
+          : room
+      )
+    );
+  };
+  const onRoomDeleted = ({ roomId }) => {
+    setRooms((prev) => prev.filter((room) => room.id !== roomId));
+    if (activeRoomId === roomId) setActiveRoomId(null);
+  };
+  const onPrivateThread = (thread) => {
+    setThreads((prev) => ({ ...prev, [thread.id]: thread }));
+  };
+
+  socket.on('bootstrap', onBootstrap);
+  socket.on('presence:update', onPresenceUpdate);
+  socket.on('rooms:update', onRoomsUpdate);
+  socket.on('room:history', onRoomHistory);
+  socket.on('room:message', onRoomMessage);
+  socket.on('room:deleted', onRoomDeleted);
+  socket.on('private:thread', onPrivateThread);
+
+  return () => {
+    socket.off('bootstrap', onBootstrap);
+    socket.off('presence:update', onPresenceUpdate);
+    socket.off('rooms:update', onRoomsUpdate);
+    socket.off('room:history', onRoomHistory);
+    socket.off('room:message', onRoomMessage);
+    socket.off('room:deleted', onRoomDeleted);
+    socket.off('private:thread', onPrivateThread);
+    socket.disconnect();
+  };
+}, [activeRoomId]);
 
   function handleJoin() {
     if (!nickname.trim()) return;
